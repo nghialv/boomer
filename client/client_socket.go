@@ -1,4 +1,4 @@
-package boomer
+package client
 
 import (
 	"bytes"
@@ -23,8 +23,8 @@ func newSocketClient(masterHost string, masterPort int) *socketClient {
 	newClient := &socketClient{
 		conn: conn,
 	}
-	go newClient.recv()
-	go newClient.send()
+	go newClient.Recv()
+	go newClient.Send()
 	return newClient
 }
 
@@ -40,30 +40,30 @@ func (c *socketClient) recvBytes(length int) []byte {
 	return buf
 }
 
-func (c *socketClient) recv() {
+func (c *socketClient) Recv() {
 	for {
 		h := c.recvBytes(4)
 		msgLength := binary.BigEndian.Uint32(h)
 		msg := c.recvBytes(int(msgLength))
-		msgFromMaster := newMessageFromBytes(msg)
-		fromMaster <- msgFromMaster
+		msgFromMasterCh := newMessageFromBytes(msg)
+		FromMasterCh <- msgFromMasterCh
 	}
 
 }
 
-func (c *socketClient) send() {
+func (c *socketClient) Send() {
 	for {
 		select {
-		case msg := <-toMaster:
+		case msg := <-ToMasterCh:
 			c.sendMessage(msg)
 			if msg.Type == "quit" {
-				disconnectedFromMaster <- true
+				DisconnectedFromMasterCh <- true
 			}
 		}
 	}
 }
 
-func (c *socketClient) sendMessage(msg *message) {
+func (c *socketClient) sendMessage(msg *Message) {
 	packed := msg.serialize()
 	buf := new(bytes.Buffer)
 

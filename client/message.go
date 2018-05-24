@@ -1,4 +1,4 @@
-package boomer
+package client
 
 import (
 	"log"
@@ -10,21 +10,21 @@ var (
 	mh codec.MsgpackHandle
 )
 
-type message struct {
+type Message struct {
 	Type   string                 `codec: "type"`
 	Data   map[string]interface{} `codec: "data"`
 	NodeID string                 `codec: "node_id"`
 }
 
-func newMessage(t string, data map[string]interface{}, nodeID string) (msg *message) {
-	return &message{
+func NewMessage(t string, data map[string]interface{}, nodeID string) (msg *Message) {
+	return &Message{
 		Type:   t,
 		Data:   data,
 		NodeID: nodeID,
 	}
 }
 
-func (m *message) serialize() (out []byte) {
+func (m *Message) serialize() (out []byte) {
 	mh.StructToArray = true
 	enc := codec.NewEncoderBytes(&out, &mh)
 	err := enc.Encode(m)
@@ -34,10 +34,10 @@ func (m *message) serialize() (out []byte) {
 	return
 }
 
-func newMessageFromBytes(raw []byte) *message {
+func newMessageFromBytes(raw []byte) *Message {
 	mh.StructToArray = true
 	dec := codec.NewDecoderBytes(raw, &mh)
-	var newMsg = &message{}
+	var newMsg = &Message{}
 	err := dec.Decode(newMsg)
 	if err != nil {
 		log.Fatal("[msgpack] decode fail")

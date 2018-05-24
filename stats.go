@@ -11,22 +11,61 @@ type requestStats struct {
 	startTime int64
 }
 
+type requestSuccess struct {
+	requestType    string
+	name           string
+	responseTime   int64
+	responseLength int64
+}
+
+type requestFailure struct {
+	requestType  string
+	name         string
+	responseTime int64
+	error        string
+}
+
+var (
+	stats            = newRequestStats()
+	requestSuccessCh = make(chan *requestSuccess, 100)
+	requestFailureCh = make(chan *requestFailure, 100)
+	clearStatsCh     = make(chan bool)
+	messageToRunner  = make(chan map[string]interface{}, 10)
+)
+
+func init() {
+	stats.entries = make(map[string]*statsEntry)
+	stats.errors = make(map[string]*statsError)
+	go func() {
+		var ticker = time.NewTicker(slaveReportInterval)
+		for {
+			select {
+			case m := <-requestSuccessCh:
+				stats.logRequest(m.requestType, m.name, m.responseTime, m.responseLength)
+			case n := <-requestFailureCh:
+				stats.logError(n.requestType, n.name, n.error)
+			case <-clearStatsCh:
+				stats.clearAll()
+			case <-ticker.C:
+				data := collectReportData()
+				// Send data to channel, no network IO in this goroutine
+				messageToRunner <- data
+			}
+		}
+	}()
+}
+
 func newRequestStats() *requestStats {
-	entries := make(map[string]*statsEntry)
-	errors := make(map[string]*statsError)
-
-	requestStats := &requestStats{
-		entries: entries,
-		errors:  errors,
+	stats := &requestStats{
+		entries: make(map[string]*statsEntry),
+		errors:  make(map[string]*statsError),
+		total: &statsEntry{
+			name:   "Total",
+			method: "",
+		},
 	}
-
-	requestStats.total = &statsEntry{
-		name:   "Total",
-		method: "",
-	}
-	requestStats.total.reset()
-
-	return requestStats
+	stats.total.reset()
+	return stats
 }
 
 func (s *requestStats) logRequest(method, name string, responseTime int64, contentLength int64) {
@@ -37,8 +76,7 @@ func (s *requestStats) logRequest(method, name string, responseTime int64, conte
 func (s *requestStats) logError(method, name, err string) {
 	s.total.logError(err)
 	s.get(name, method).logError(err)
-
-	// store error in errors map
+	// Store error in errors map
 	key := MD5(method, name, err)
 	entry, ok := s.errors[key]
 	if !ok {
@@ -74,7 +112,6 @@ func (s *requestStats) clearAll() {
 		method: "",
 	}
 	s.total.reset()
-
 	s.entries = make(map[string]*statsEntry)
 	s.errors = make(map[string]*statsError)
 	s.startTime = time.Now().Unix()
@@ -128,41 +165,33 @@ func (s *statsEntry) reset() {
 
 func (s *statsEntry) log(responseTime int64, contentLength int64) {
 	s.numRequests++
-
 	s.logTimeOfRequest()
 	s.logResponseTime(responseTime)
-
 	s.totalContentLength += contentLength
 }
 
 func (s *statsEntry) logTimeOfRequest() {
 	now := time.Now().Unix()
-
 	_, ok := s.numReqsPerSec[now]
 	if !ok {
 		s.numReqsPerSec[now] = 1
 	} else {
 		s.numReqsPerSec[now]++
 	}
-
 	s.lastRequestTimestamp = now
 }
 
 func (s *statsEntry) logResponseTime(responseTime int64) {
 	s.totalResponseTime += responseTime
-
 	if s.minResponseTime == 0 {
 		s.minResponseTime = responseTime
 	}
-
 	if responseTime < s.minResponseTime {
 		s.minResponseTime = responseTime
 	}
-
 	if responseTime > s.maxResponseTime {
 		s.maxResponseTime = responseTime
 	}
-
 	roundedResponseTime := int64(0)
 
 	// to avoid to much data that has to be transferred to the master node when
@@ -192,20 +221,20 @@ func (s *statsEntry) logError(err string) {
 }
 
 func (s *statsEntry) serialize() map[string]interface{} {
-	result := make(map[string]interface{})
-	result["name"] = s.name
-	result["method"] = s.method
-	result["last_request_timestamp"] = s.lastRequestTimestamp
-	result["start_time"] = s.startTime
-	result["num_requests"] = s.numRequests
-	result["num_failures"] = s.numFailures
-	result["total_response_time"] = s.totalResponseTime
-	result["max_response_time"] = s.maxResponseTime
-	result["min_response_time"] = s.minResponseTime
-	result["total_content_length"] = s.totalContentLength
-	result["response_times"] = s.responseTimes
-	result["num_reqs_per_sec"] = s.numReqsPerSec
-	return result
+	return map[string]interface{}{
+		"name":                   s.name,
+		"method":                 s.method,
+		"last_request_timestamp": s.lastRequestTimestamp,
+		"start_time":             s.startTime,
+		"num_requests":           s.numRequests,
+		"num_failures":           s.numFailures,
+		"total_response_time":    s.totalResponseTime,
+		"max_response_time":      s.maxResponseTime,
+		"min_response_time":      s.minResponseTime,
+		"total_content_length":   s.totalContentLength,
+		"response_times":         s.responseTimes,
+		"num_reqs_per_sec":       s.numReqsPerSec,
+	}
 }
 
 func (s *statsEntry) getStrippedReport() map[string]interface{} {
@@ -226,66 +255,20 @@ func (err *statsError) occured() {
 }
 
 func (err *statsError) toMap() map[string]interface{} {
-	m := make(map[string]interface{})
-
-	m["method"] = err.method
-	m["name"] = err.name
-	m["error"] = err.error
-	m["occurences"] = err.occurences
-
-	return m
+	return map[string]interface{}{
+		"method":     err.method,
+		"name":       err.name,
+		"error":      err.error,
+		"occurences": err.occurences,
+	}
 }
 
 func collectReportData() map[string]interface{} {
-	data := make(map[string]interface{})
-
-	data["stats"] = stats.serializeStats()
-	data["stats_total"] = stats.total.getStrippedReport()
-	data["errors"] = stats.serializeErrors()
-
+	data := map[string]interface{}{
+		"stats":       stats.serializeStats(),
+		"stats_total": stats.total.getStrippedReport(),
+		"errors":      stats.serializeErrors(),
+	}
 	stats.errors = make(map[string]*statsError)
-
 	return data
-}
-
-type requestSuccess struct {
-	requestType    string
-	name           string
-	responseTime   int64
-	responseLength int64
-}
-
-type requestFailure struct {
-	requestType  string
-	name         string
-	responseTime int64
-	error        string
-}
-
-var stats = newRequestStats()
-var requestSuccessChannel = make(chan *requestSuccess, 100)
-var requestFailureChannel = make(chan *requestFailure, 100)
-var clearStatsChannel = make(chan bool)
-var messageToRunner = make(chan map[string]interface{}, 10)
-
-func init() {
-	stats.entries = make(map[string]*statsEntry)
-	stats.errors = make(map[string]*statsError)
-	go func() {
-		var ticker = time.NewTicker(slaveReportInterval)
-		for {
-			select {
-			case m := <-requestSuccessChannel:
-				stats.logRequest(m.requestType, m.name, m.responseTime, m.responseLength)
-			case n := <-requestFailureChannel:
-				stats.logError(n.requestType, n.name, n.error)
-			case <-clearStatsChannel:
-				stats.clearAll()
-			case <-ticker.C:
-				data := collectReportData()
-				// send data to channel, no network IO in this goroutine
-				messageToRunner <- data
-			}
-		}
-	}()
 }

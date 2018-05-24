@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/myzhan/boomer"
+	"github.com/nghialv/boomer"
 )
 
 //                            +------------+
@@ -33,44 +33,67 @@ import (
 // See also:
 // udpcopy: https://github.com/wangbin579/udpcopy
 
+const name = "udproxy"
+
+var (
+	testStarted    = false
+	backendAddr    *string
+	backendTimeout time.Duration
+	proxyHost      *string
+	proxyPort      *int
+	udpBufferSize  *int
+	number         *int
+	b              = boomer.NewBoomer()
+)
+
+func init() {
+	backendAddr = flag.String("backend-addr", "127.0.0.1:44444", "backend address")
+	timeout := flag.Int("backend-timeout", 1000, "backend timeout(ms)")
+	backendTimeout = time.Duration(*timeout) * time.Millisecond
+	proxyHost = flag.String("proxy-host", "0.0.0.0", "proxy bind-host")
+	proxyPort = flag.Int("proxy-port", 23333, "proxy bind-port")
+	udpBufferSize = flag.Int("udp-buffer-size", 10240, "udp recv buffer size")
+	number = flag.Int("number", 1, "the number of replication for multi-copying")
+	flag.Parse()
+}
+
+func main() {
+	task := &boomer.Task{
+		Name:   "udproxy",
+		Weight: 10,
+		Fn:     deadend,
+	}
+	go proxy()
+	b.Run(task)
+}
+
 func sendReq(req []byte, addr string) {
-
 	a, err := net.ResolveUDPAddr("udp", addr)
-
 	conn, err := net.DialUDP("udp", nil, a)
 	if err != nil {
-		boomer.Events.Publish("request_failure", "udp-dial", name, 0.0, err.Error())
+		b.Report("request_failure", "udp-dial", name, 0.0, err.Error())
 		return
 	}
-
 	conn.SetReadDeadline(time.Now().Add(backendTimeout))
-
 	for n := 0; n < *number; n++ {
-
 		startTime := boomer.Now()
-
 		_, err = conn.Write(req)
 		if err != nil {
-			boomer.Events.Publish("request_failure", "udp-write", name, 0.0, err.Error())
+			b.Report("request_failure", "udp-write", name, 0.0, err.Error())
 			return
 		}
-
 		resp := make([]byte, *udpBufferSize)
 		respLength, err := conn.Read(resp)
 		if err != nil {
-			boomer.Events.Publish("request_failure", "udp-read", name, 0.0, err.Error())
+			b.Report("request_failure", "udp-read", name, 0.0, err.Error())
 			return
 		}
-
 		elapsed := boomer.Now() - startTime
-
-		boomer.Events.Publish("request_success", "udp-resp", name, elapsed, int64(respLength))
+		b.Report("request_success", "udp-resp", name, elapsed, int64(respLength))
 	}
-
 }
 
 func proxy() {
-
 	listener, err := net.ListenUDP("udp", &net.UDPAddr{
 		IP:   net.ParseIP(*proxyHost),
 		Port: *proxyPort,
@@ -78,7 +101,6 @@ func proxy() {
 	if err != nil {
 		log.Fatal("error binding on port:", *proxyPort, err)
 	}
-
 	for {
 		data := make([]byte, *udpBufferSize)
 		n, _, err := listener.ReadFromUDP(data)
@@ -91,7 +113,7 @@ func proxy() {
 			continue
 		}
 		if !testStarted {
-			// test is not started, drop current request.
+			// Test is not started, drop current request.
 			continue
 		}
 		go sendReq(data[:n], *backendAddr)
@@ -99,47 +121,8 @@ func proxy() {
 }
 
 func deadend() {
-
 	testStarted = true
-
 	for {
 		time.Sleep(time.Second * 100)
 	}
-}
-
-func main() {
-
-	task := &boomer.Task{
-		Name:   "udproxy",
-		Weight: 10,
-		Fn:     deadend,
-	}
-
-	go proxy()
-
-	boomer.Run(task)
-}
-
-const name = "udproxy"
-
-var testStarted = false
-
-var backendAddr *string
-var backendTimeout time.Duration
-var proxyHost *string
-var proxyPort *int
-var udpBufferSize *int
-var number *int
-
-func init() {
-
-	backendAddr = flag.String("backend-addr", "127.0.0.1:44444", "backend address")
-	timeout := flag.Int("backend-timeout", 1000, "backend timeout(ms)")
-	backendTimeout = time.Duration(*timeout) * time.Millisecond
-	proxyHost = flag.String("proxy-host", "0.0.0.0", "proxy bind-host")
-	proxyPort = flag.Int("proxy-port", 23333, "proxy bind-port")
-	udpBufferSize = flag.Int("udp-buffer-size", 10240, "udp recv buffer size")
-	number = flag.Int("number", 1, "the number of replication for multi-copying")
-	flag.Parse()
-
 }

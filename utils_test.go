@@ -3,7 +3,6 @@ package boomer
 import "testing"
 
 func TestRound(t *testing.T) {
-
 	if int(round(float64(147.5002), .5, -1)) != 150 {
 		t.Error("147.5002 should be rounded to 150")
 	}
@@ -29,5 +28,4 @@ func TestRound(t *testing.T) {
 	if roundOne != roundTwo {
 		t.Error("round(58360) should be equal to round(58460)")
 	}
-
 }

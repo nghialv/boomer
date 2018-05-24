@@ -1,4 +1,4 @@
-package boomer
+package client
 
 import "testing"
 

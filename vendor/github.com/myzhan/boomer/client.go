@@ -9,9 +9,9 @@ type client interface {
 	send()
 }
 
-var fromMaster = make(chan *message, 100)
-var toMaster = make(chan *message, 100)
-var disconnectedFromMaster = make(chan bool)
+var FromMasterCh = make(chan *message, 100)
+var ToMasterCh = make(chan *message, 100)
+var DisconnectedFromMasterCh = make(chan bool)
 
 var masterHost *string
 var masterPort *int

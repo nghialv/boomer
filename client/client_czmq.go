@@ -1,6 +1,6 @@
 // +build goczmq
 
-package boomer
+package client
 
 import (
 	"fmt"
@@ -14,7 +14,7 @@ type czmqSocketClient struct {
 	pullConn *goczmq.Sock
 }
 
-func newClient() client {
+func newClient() Client {
 	log.Println("Boomer is built with goczmq support.")
 	var client client
 	var message string
@@ -55,8 +55,8 @@ func newZmqClient(masterHost string, masterPort int) *czmqSocketClient {
 func (c *czmqSocketClient) recv() {
 	for {
 		msg, _, _ := c.pullConn.RecvFrame()
-		msgFromMaster := newMessageFromBytes(msg)
-		fromMaster <- msgFromMaster
+		msgFromMasterCh := newMessageFromBytes(msg)
+		FromMasterCh <- msgFromMasterCh
 	}
 
 }
@@ -64,10 +64,10 @@ func (c *czmqSocketClient) recv() {
 func (c *czmqSocketClient) send() {
 	for {
 		select {
-		case msg := <-toMaster:
+		case msg := <-ToMasterCh:
 			c.sendMessage(msg)
 			if msg.Type == "quit" {
-				disconnectedFromMaster <- true
+				DisconnectedFromMasterCh <- true
 			}
 		}
 	}

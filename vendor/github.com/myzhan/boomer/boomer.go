@@ -63,7 +63,7 @@ func Run(tasks ...*Task) {
 	Events.Publish("boomer:quit")
 
 	// wait for quit message is sent to master
-	<-disconnectedFromMaster
+	<-DisconnectedFromMasterCh
 	log.Println("shut down")
 
 }

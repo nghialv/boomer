@@ -1,21 +1,23 @@
-package boomer
+package client
 
 import (
 	"flag"
 )
 
-type client interface {
-	recv()
-	send()
+type Client interface {
+	Recv()
+	Send()
 }
 
-var fromMaster = make(chan *message, 100)
-var toMaster = make(chan *message, 100)
-var disconnectedFromMaster = make(chan bool)
+var (
+	FromMasterCh             = make(chan *Message, 100)
+	ToMasterCh               = make(chan *Message, 100)
+	DisconnectedFromMasterCh = make(chan bool)
 
-var masterHost *string
-var masterPort *int
-var rpc *string
+	masterHost *string
+	masterPort *int
+	rpc        *string
+)
 
 func init() {
 	masterHost = flag.String("master-host", "127.0.0.1", "Host or IP address of locust master for distributed load testing. Defaults to 127.0.0.1.")

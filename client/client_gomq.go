@@ -1,6 +1,6 @@
 // +build !goczmq
 
-package boomer
+package client
 
 import (
 	"fmt"
@@ -17,10 +17,10 @@ type gomqSocketClient struct {
 	pullSocket *gomq.Socket
 }
 
-func newClient() client {
+func NewClient() Client {
 	log.Println("Boomer is built with gomq support.")
 	var message string
-	var client client
+	var client Client
 	if *rpc == "zeromq" {
 		client = newZmqClient(*masterHost, *masterPort)
 		message = fmt.Sprintf("Boomer is connected to master(%s:%d|%d) press Ctrl+c to quit.", *masterHost, *masterPort, *masterPort+1)
@@ -76,37 +76,37 @@ func newZmqClient(masterHost string, masterPort int) *gomqSocketClient {
 		pushSocket: pushSocket,
 		pullSocket: pullSocket,
 	}
-	go newClient.recv()
-	go newClient.send()
+	go newClient.Recv()
+	go newClient.Send()
 	return newClient
 }
 
-func (c *gomqSocketClient) recv() {
+func (c *gomqSocketClient) Recv() {
 	for {
 		msg, err := c.pullSocket.Recv()
 		if err != nil {
 			log.Printf("Error reading: %v\n", err)
 		} else {
-			msgFromMaster := newMessageFromBytes(msg)
-			fromMaster <- msgFromMaster
+			msgFromMasterCh := newMessageFromBytes(msg)
+			FromMasterCh <- msgFromMasterCh
 		}
 	}
 
 }
 
-func (c *gomqSocketClient) send() {
+func (c *gomqSocketClient) Send() {
 	for {
 		select {
-		case msg := <-toMaster:
+		case msg := <-ToMasterCh:
 			c.sendMessage(msg)
 			if msg.Type == "quit" {
-				disconnectedFromMaster <- true
+				DisconnectedFromMasterCh <- true
 			}
 		}
 	}
 }
 
-func (c *gomqSocketClient) sendMessage(msg *message) {
+func (c *gomqSocketClient) sendMessage(msg *Message) {
 	err := c.pushSocket.Send(msg.serialize())
 	if err != nil {
 		log.Printf("Error sending: %v\n", err)

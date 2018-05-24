@@ -1,80 +1,78 @@
 package boomer
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
-	"runtime"
-	"strings"
 	"syscall"
+	"time"
+
+	"github.com/nghialv/boomer/client"
 )
 
-// Run accepts a slice of Task and connects
-// to a locust master.
-func Run(tasks ...*Task) {
+var (
+	maxRPS          int64
+	maxRPSThreshold int64
+	maxRPSEnabled   = false
+	maxRPSControlCh = make(chan bool)
+)
 
-	// support go version below 1.5
-	runtime.GOMAXPROCS(runtime.NumCPU())
+type UserFactory func(id int) User
 
+type User interface {
+	Config() *UserConfig
+	Tasks() []*Task
+}
+
+type UserConfig struct {
+	MinWait time.Duration
+	MaxWait time.Duration
+}
+
+type Task struct {
+	Name   string
+	Weight int
+	Fn     func(context.Context)
+}
+
+type boomer struct {
+	maxRPS        int
+	masterAddress string
+}
+
+func init() {
+	flag.Int64Var(&maxRPS, "max-rps", 0, "Max RPS that boomer can generate.")
+}
+
+func NewBoomer() *boomer {
+	return &boomer{}
+}
+
+func (b *boomer) Run(factory UserFactory) {
 	if !flag.Parsed() {
 		flag.Parse()
 	}
-
-	if *runTasks != "" {
-		// Run tasks without connecting to the master.
-		taskNames := strings.Split(*runTasks, ",")
-		for _, task := range tasks {
-			if task.Name == "" {
-				continue
-			} else {
-				for _, name := range taskNames {
-					if name == task.Name {
-						log.Println("Running " + task.Name)
-						task.Fn()
-					}
-				}
-			}
-		}
-		return
-	}
-
 	if maxRPS > 0 {
 		log.Println("Max RPS that boomer may generate is limited to", maxRPS)
 		maxRPSEnabled = true
 	}
-
-	var r *runner
-	client := newClient()
-	r = &runner{
-		tasks:  tasks,
-		client: client,
-		nodeID: getNodeID(),
+	runner := &runner{
+		userFactory: factory,
+		client:      client.NewClient(),
+		nodeID:      getNodeID(),
 	}
-
-	Events.Subscribe("boomer:quit", r.onQuiting)
-
-	r.getReady()
-
-	c := make(chan os.Signal)
-	signal.Notify(c, syscall.SIGINT)
-
-	<-c
-	Events.Publish("boomer:quit")
-
-	// wait for quit message is sent to master
-	<-disconnectedFromMaster
-	log.Println("shut down")
-
+	events.Subscribe("boomer:quit", runner.onQuiting)
+	runner.getReady()
+	ch := make(chan os.Signal)
+	signal.Notify(ch, syscall.SIGINT)
+	<-ch
+	events.Publish("boomer:quit")
+	<-client.DisconnectedFromMasterCh
+	log.Println("Shutdown")
 }
 
-var runTasks *string
-var maxRPS int64
-var maxRPSThreshold int64
-var maxRPSEnabled = false
-var maxRPSControlChannel = make(chan bool)
-
-func init() {
-	runTasks = flag.String("run-tasks", "", "Run tasks without connecting to the master, multiply tasks is separated by comma. Usually, it's for debug purpose.")
-	flag.Int64Var(&maxRPS, "max-rps", 0, "Max RPS that boomer can generate.")
+func (b *boomer) Report(topic string, args ...interface{}) {
+	events.Publish(topic, args...)
 }
